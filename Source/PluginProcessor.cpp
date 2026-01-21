@@ -15,13 +15,40 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
         "gain", "Gain (dB)",
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f 
     ));
-    params.push_back (std:: make_unique<juce::AudioParameterBool>( //Bypass
+    params.push_back (std::make_unique<juce::AudioParameterBool>( //Bypass
         "bypass", "Bypass", false
     ));
-    return { params.begin(), params.end() };
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        "threshold", "Threshold (dB)",
+        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -18.0f
+    ));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+        "ratio", "Ratio",
+        juce::StringArray {"1.5:1", "3:1", "4:1", "10:1", "20:1:"},
+        2 //default = 4;1
+    ));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        "attack", "Attack (ms)",
+        juce::NormalisableRange<float>(0.1f, 100.0f, 0.1f, 0.5f), 10.0f
+    ));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        "release", "Release (ms)",
+        juce::NormalisableRange<float>(10.0f, 1000.0f, 1.0f, 0.5f), 100.0f
+    ));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        "knee", "Knee (dB)",
+        juce::NormalisableRange<float>(0.0f, 12.0f, 0.1f), 6.0f
+    ));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        "makeup", "Makeup Gain (dB)",
+        juce::NormalisableRange<float>(-12.0f, 24.0f, 0.1f), 0.0f
+    ));
+return { params.begin(), params.end() };
 }
 //Prepare to Play
-void StereoCompressorBuild1AudioProcessor::prepareToPlay (double, int )
+void StereoCompressorBuild1AudioProcessor::prepareToPlay (double, int)
 {
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
