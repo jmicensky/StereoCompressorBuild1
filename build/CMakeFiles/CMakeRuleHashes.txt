@@ -1,4 +1,0 @@
-# Hashes of file build rules.
-890a8c3a2c9d5fbccfb25a28f699df35 StereoCompressorBuild1_artefacts/JuceLibraryCode/JuceHeader.h
-b8f26cb233f4a41b79ccdf342e58d2cb StereoCompressorBuild1_artefacts/JuceLibraryCode/StereoCompressorBuild1_AU/PkgInfo
-72f65bdba200e860d1a1bbc1f2dee93d StereoCompressorBuild1_artefacts/JuceLibraryCode/StereoCompressorBuild1_VST3/PkgInfo
