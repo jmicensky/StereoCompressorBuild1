@@ -1,0 +1,58 @@
+{
+  "Name": "StereoCompressorBuild1",
+  "Version": "0.0.1",
+  "Factory Info": {
+    "Vendor": "John Micensky",
+    "URL": "",
+    "E-Mail": "",
+    "Flags": {
+      "Unicode": true,
+      "Classes Discardable": false,
+      "Component Non Discardable": false,
+    },
+  },
+  "Classes": [
+    {
+      "CID": "565354446F717073746572656F636F6D",
+      "Category": "Audio Module Class",
+      "Name": "StereoCompressorBuild1",
+      "Vendor": "John Micensky",
+      "Version": "0.0.1",
+      "SDKVersion": "VST 3.7.12",
+      "Sub Categories": [
+        "Fx",
+      ],
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+    {
+      "CID": "565345446F717073746572656F636F6D",
+      "Category": "Component Controller Class",
+      "Name": "StereoCompressorBuild1",
+      "Vendor": "John Micensky",
+      "Version": "0.0.1",
+      "SDKVersion": "VST 3.7.12",
+      "Sub Categories": [
+        "Fx",
+      ],
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+    {
+      "CID": "ABCDEF01C0DEF00D4D616E75446F7170",
+      "Category": "Plugin Compatibility Class",
+      "Name": "StereoCompressorBuild1",
+      "Vendor": "John Micensky",
+      "Version": "0.0.1",
+      "SDKVersion": "VST 3.7.12",
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+  ],
+}

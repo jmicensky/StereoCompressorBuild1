@@ -1,0 +1,3 @@
+/Users/johnmicensky/Documents/UIC/Plugin_Design_Documents/StereoCompressorBuild1/build/_deps/juce-subbuild/CMakeFiles/juce-populate.dir
+/Users/johnmicensky/Documents/UIC/Plugin_Design_Documents/StereoCompressorBuild1/build/_deps/juce-subbuild/CMakeFiles/edit_cache.dir
+/Users/johnmicensky/Documents/UIC/Plugin_Design_Documents/StereoCompressorBuild1/build/_deps/juce-subbuild/CMakeFiles/rebuild_cache.dir
