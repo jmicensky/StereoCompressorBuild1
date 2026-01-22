@@ -26,7 +26,7 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
 
     params.push_back (std::make_unique<juce::AudioParameterChoice>(
         "ratio", "Ratio",
-        juce::StringArray {"1.5:1", "3:1", "4:1", "10:1", "20:1:"},
+        juce::StringArray {"1.5:1", "3:1", "4:1","6:1", "10:1", "20:1"},
         2 //default = 4;1
     ));
     params.push_back (std::make_unique<juce::AudioParameterFloat>(
@@ -48,8 +48,13 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
 return { params.begin(), params.end() };
 }
 //Prepare to Play
-void StereoCompressorBuild1AudioProcessor::prepareToPlay (double, int)
+void StereoCompressorBuild1AudioProcessor::prepareToPlay (double sampleRate, int)
 {
+    currentSampleRate = sampleRate;
+
+    envL.prepare (sampleRate);
+    envR.prepare (sampleRate);
+    
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
 } //No DSP state yet. Will use this later for envelope filters, followers etc.
@@ -63,23 +68,51 @@ bool StereoCompressorBuild1AudioProcessor::isBusesLayoutSupported (const BusesLa
 void StereoCompressorBuild1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& )
 {
     juce::ScopedNoDenormals noDenormals;
+    // Clear any output channels that don't have input data
+auto totalNumInputChannels  = getTotalNumInputChannels();
+auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+    buffer.clear (i, 0, buffer.getNumSamples());
+
+
     const bool bypass = apvts.getRawParameterValue("bypass")->load() > 0.5f; //Get bypass parameter value
     if (bypass) return;
+
+    const float attackMs = apvts.getRawParameterValue("attack") ->load();
+    const float releaseMs = apvts.getRawParameterValue("release") ->load();
+    envL.updateTimeConstants (attackMs, releaseMs);
+    envR.updateTimeConstants (attackMs, releaseMs);
+
     // Pulls the DAW/UI Value and exits early if bypassed
     const float gainDb = apvts.getRawParameterValue("gain")->load(); //Get gain parameter value
     const float g = juce::Decibels::decibelsToGain(gainDb); //Convert dB to linear gain
 
 // Process every sample    
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        auto* x = buffer.getWritePointer (ch); //gives you raw float for each channel
+{
+    auto* x = buffer.getWritePointer (ch);
 
-        for (int n = 0; n < buffer.getNumSamples(); ++n)
-        {
-            x[n] *= g; //Apply gain to each sample
-        }
+    for (int n = 0; n < buffer.getNumSamples(); ++n)
+    {
+        const float env = (ch == 0) ? envL.processSample (x[n])
+                                    : envR.processSample (x[n]);
+
+        x[n] *= g;
     }
 }
+lastEnvL.store (envL.getEnvelope());
+lastEnvR.store (envR.getEnvelope());
+
+static int counter = 0;
+if (++counter >= 200)
+{
+    counter = 0;
+    DBG ("Env L: " << envL.getEnvelope() << "  Env R: " << envR.getEnvelope());
+}
+
+
+} //Applies gain and updates envelope followers for each channel.
 
 juce::AudioProcessorEditor* StereoCompressorBuild1AudioProcessor::createEditor()
 {
@@ -96,7 +129,9 @@ void StereoCompressorBuild1AudioProcessor::getStateInformation (juce::MemoryBloc
 { 
         if (auto xml = getXmlFromBinary(data, sizeInBytes))
             apvts.replaceState (juce::ValueTree::fromXml(*xml)); //Restores the APVTS state from the host
-}juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new StereoCompressorBuild1AudioProcessor();
 }

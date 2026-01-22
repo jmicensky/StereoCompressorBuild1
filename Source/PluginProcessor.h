@@ -2,6 +2,8 @@
 //include line gives you JUCE classes like AudioProcessor, AudioBuffer, APVTS, etc.
 #pragma once 
 #include <JuceHeader.h>
+#include <cmath>
+
 
 class StereoCompressorBuild1AudioProcessor  : public juce::AudioProcessor
 {
@@ -44,6 +46,50 @@ public:
 juce::AudioProcessorValueTreeState apvts; //manages the plugin's parameters
 static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout(); //creates the parameter layout
 private:
+// envelope follower 
+
+private:
+    // ---- Envelope follower (Day 3) ----
+    double currentSampleRate = 44100.0;
+
+    std::atomic<float> lastEnvL { 0.0f };
+    std::atomic<float> lastEnvR { 0.0f };
+
+    struct EnvelopeFollower
+    {
+        void prepare (double sampleRate)
+
+
+        {
+            sr = sampleRate;
+            env = 0.0f;
+            updateTimeConstants (10.0f, 100.0f);
+        }
+
+        void updateTimeConstants (float attackMs, float releaseMs)
+        {
+            attackCoeff  = std::exp (-1.0f / (0.001f * attackMs  * (float) sr));
+            releaseCoeff = std::exp (-1.0f / (0.001f * releaseMs * (float) sr));
+        }
+
+        float processSample (float x)
+        {
+            x = std::fabs (x); //floating absolute value
+            const float coeff = (x > env) ? attackCoeff : releaseCoeff;
+            env = x + coeff * (env - x);
+            return env;
+        }
+
+        float getEnvelope() const { return env; }
+
+        double sr = 44100.0;
+        float env = 0.0f;
+        float attackCoeff = 0.0f;
+        float releaseCoeff = 0.0f;
+    };
+
+    EnvelopeFollower envL, envR;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StereoCompressorBuild1AudioProcessor)
 }; //Prevents accidental copying of the class and adds memory leak detection features.
 
