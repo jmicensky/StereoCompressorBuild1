@@ -1,6 +1,13 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h" // Pulls in the editor header file
 
+static float ratioFromChoiceIndex (int idx)
+{
+    constexpr float ratios[] = { 1.5f, 3.0f, 4.0f, 6.0f, 10.0f, 20.0f };
+    idx = juce::jlimit (0, int (std::size (ratios)) - 1, idx);
+    return ratios[idx]; 
+} //Helper function to convert choice index to ratio value.
+
 StereoCompressorBuild1AudioProcessor::StereoCompressorBuild1AudioProcessor()
      : AudioProcessor (BusesProperties() //Tells the host that it's stereo input and stereo output.
                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
@@ -15,6 +22,7 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
         "gain", "Gain (dB)",
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f 
     ));
+
     params.push_back (std::make_unique<juce::AudioParameterBool>( //Bypass
         "bypass", "Bypass", false
     ));
@@ -23,7 +31,11 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
         "threshold", "Threshold (dB)",
         juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -18.0f
     ));
-
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+    "detectorMode", "Detector",
+    juce::StringArray { "Peak", "RMS" },
+    0
+    )); //detector mode parameter
     params.push_back (std::make_unique<juce::AudioParameterChoice>(
         "ratio", "Ratio",
         juce::StringArray {"1.5:1", "3:1", "4:1","6:1", "10:1", "20:1"},
@@ -52,8 +64,11 @@ void StereoCompressorBuild1AudioProcessor::prepareToPlay (double sampleRate, int
 {
     currentSampleRate = sampleRate;
 
-    envL.prepare (sampleRate);
-    envR.prepare (sampleRate);
+    envL.prepare (sampleRate); //prepares left envelope follower (peak)
+    envR.prepare (sampleRate); //prepares right envelope follower (peak)
+
+    rmsL.prepare (sampleRate);
+    rmsR.prepare (sampleRate); //prepares RMS followers
     
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
@@ -65,6 +80,7 @@ bool StereoCompressorBuild1AudioProcessor::isBusesLayoutSupported (const BusesLa
         && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 } //Only supports stereo in and out.
 
+
 void StereoCompressorBuild1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& )
 {
     juce::ScopedNoDenormals noDenormals;
@@ -72,21 +88,69 @@ void StereoCompressorBuild1AudioProcessor::processBlock (juce::AudioBuffer<float
 auto totalNumInputChannels  = getTotalNumInputChannels();
 auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+float maxGRDbL = 0.0f;
+float maxGRDbR = 0.0f;
+
 for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
     buffer.clear (i, 0, buffer.getNumSamples());
 
-
+//PARAMETER READS
     const bool bypass = apvts.getRawParameterValue("bypass")->load() > 0.5f; //Get bypass parameter value
-    if (bypass) return;
+    if (bypass) return;  // Pulls the DAW/UI Value and exits early if bypassed
+
+    const float gainDb = apvts.getRawParameterValue("gain")->load(); //Get gain parameter value
+
+    const int detectorMode = (int) apvts.getRawParameterValue ("detectorMode")->load(); // 0=Peak, 1=RMS
+
+    const float thresholdDb = apvts.getRawParameterValue("threshold")->load(); //Get threshold parameter value
+    const float kneeDb = apvts.getRawParameterValue("knee")->load(); //Get knee parameter value
+    const float makeupDb = apvts.getRawParameterValue("makeup")->load(); //Get makeup gain parameter value
+
+    const int ratioIndex = (int) apvts.getRawParameterValue("ratio")->load();
+    const float ratio = ratioFromChoiceIndex (ratioIndex);
 
     const float attackMs = apvts.getRawParameterValue("attack") ->load();
     const float releaseMs = apvts.getRawParameterValue("release") ->load();
-    envL.updateTimeConstants (attackMs, releaseMs);
-    envR.updateTimeConstants (attackMs, releaseMs);
 
-    // Pulls the DAW/UI Value and exits early if bypassed
-    const float gainDb = apvts.getRawParameterValue("gain")->load(); //Get gain parameter value
-    const float g = juce::Decibels::decibelsToGain(gainDb); //Convert dB to linear gain
+    envL.updateTimeConstants (attackMs, releaseMs); //update peak envelope follower time constants
+    envR.updateTimeConstants (attackMs, releaseMs);
+    rmsL.updateTimeConstants (attackMs, releaseMs); //update RMS follower time constants
+    rmsR.updateTimeConstants (attackMs, releaseMs);
+
+
+    const float inputGain  = juce::Decibels::decibelsToGain (gainDb);
+    const float makeupGain = juce::Decibels::decibelsToGain (makeupDb);
+
+    constexpr float eps = 1.0e-9f;
+
+auto computeGainReductionDb = [&] (float inLevelDb)
+{
+    const float x = inLevelDb;
+    const float T = thresholdDb;
+    const float R = ratio;
+
+    if (kneeDb <= 0.0f)
+    {
+        if (x <= T) return 0.0f;
+        const float y = T + (x - T) / R;
+        return (y - x);
+    }
+
+    const float halfK = 0.5f * kneeDb;
+
+    if (x < (T - halfK)) return 0.0f;
+
+    if (x > (T + halfK))
+    {
+        const float y = T + (x - T) / R;
+        return (y - x);
+    }
+
+    const float d = x - (T - halfK);
+    const float y = x + (1.0f / R - 1.0f) * (d * d) / (2.0f * kneeDb);
+    return (y - x);
+};
+
 
 // Process every sample    
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -95,14 +159,31 @@ for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
 
     for (int n = 0; n < buffer.getNumSamples(); ++n)
     {
-        const float env = (ch == 0) ? envL.processSample (x[n])
-                                    : envR.processSample (x[n]);
+    float s = x[n] * inputGain;
+        
+    float det = 0.0f;
 
-        x[n] *= g;
+            if (detectorMode == 0) // Peak
+            {
+            det = (ch == 0) ? envL.processSample (s) : envR.processSample (s);
+            }
+            else // RMS
+            {
+            det = (ch == 0) ? rmsL.processSample (s) : rmsR.processSample (s);
+            }
+        const float detDb = juce::Decibels::gainToDecibels (det + eps);
+        const float grDb  = computeGainReductionDb (detDb);
+        const float grLin = juce::Decibels::decibelsToGain (grDb); // It's a compressor now!!! WOOOO!!!!!!!
+        const float grAmount = -grDb; // make it positive (e.g. 6 dB reduction => +6)
+            if (ch == 0) maxGRDbL = juce::jmax (maxGRDbL, grAmount);
+            else         maxGRDbR = juce::jmax (maxGRDbR, grAmount);
+
+
+x[n] = s * grLin * makeupGain;
+
     }
 }
-lastEnvL.store (envL.getEnvelope());
-lastEnvR.store (envR.getEnvelope());
+
 
 static int counter = 0;
 if (++counter >= 200)
@@ -111,12 +192,21 @@ if (++counter >= 200)
     DBG ("Env L: " << envL.getEnvelope() << "  Env R: " << envR.getEnvelope());
 }
 
+// --- Meter ballistics (fast attack, slow release) ---
+constexpr float meterRelease = 0.90f; // closer to 1 = slower decay
 
-} //Applies gain and updates envelope followers for each channel.
+grMeterL = juce::jmax (maxGRDbL, grMeterL * meterRelease);
+grMeterR = juce::jmax (maxGRDbR, grMeterR * meterRelease);
+
+lastGRL.store (grMeterL);
+lastGRR.store (grMeterR);
+
+} //THIS IS THE END OF THE PROCESS BLOCK
+
 
 juce::AudioProcessorEditor* StereoCompressorBuild1AudioProcessor::createEditor()
 {
-    return new juce::GenericAudioProcessorEditor (*this); //Creates a generic editor that automatically generates UI based on parameters   
+    return new StereoCompressorBuild1AudioProcessorEditor (*this); //Creates a generic editor that automatically generates UI based on parameters   
 } //JUCE builds a UI automatically from parameter layout.
 
 //Serializing parameter tree to XML and hands it to the DAW for saving

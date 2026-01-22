@@ -11,6 +11,9 @@ public:
     StereoCompressorBuild1AudioProcessor();
     ~StereoCompressorBuild1AudioProcessor() override = default;
 
+    float getLastGainReductionL() const noexcept { return lastGRL.load(); } //public getter for left gain reduction meter
+    float getLastGainReductionR() const noexcept { return lastGRR.load(); } //public getter for right gain reduction meter
+
 //Plugin is a C++ class that inherits from JUCE's AudioProcessor class. This declares a contructor (runs when plugin loads) and destructor.
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override; //called once before audio starts; set sample rate; allocate buffers
@@ -55,6 +58,11 @@ private:
     std::atomic<float> lastEnvL { 0.0f };
     std::atomic<float> lastEnvR { 0.0f };
 
+    // --- Gain Reduction meter smoothing (GUI only) ---
+float grMeterL = 0.0f;
+float grMeterR = 0.0f;
+
+
     struct EnvelopeFollower
     {
         void prepare (double sampleRate)
@@ -87,8 +95,43 @@ private:
         float attackCoeff = 0.0f;
         float releaseCoeff = 0.0f;
     };
+    struct RMSFollower
+{
+        void prepare (double sampleRate)
+    {
+        sr = sampleRate;
+        envPower = 0.0f;
+        updateTimeConstants (10.0f, 100.0f);
+    }
+
+        void updateTimeConstants (float attackMs, float releaseMs)
+    {
+        attackCoeff  = std::exp (-1.0f / (0.001f * attackMs  * (float) sr));
+        releaseCoeff = std::exp (-1.0f / (0.001f * releaseMs * (float) sr));
+    }
+
+        float processSample (float x)
+    {
+        const float p = x * x; // power
+        const float coeff = (p > envPower) ? attackCoeff : releaseCoeff;
+        envPower = p + coeff * (envPower - p);
+        return std::sqrt (envPower);
+    }
+
+        double sr = 44100.0;
+        float envPower = 0.0f;
+        float attackCoeff = 0.0f;
+        float releaseCoeff = 0.0f;
+};
+
 
     EnvelopeFollower envL, envR;
+    RMSFollower rmsL, rmsR;
+
+// Gain Reduction meter values (store POSITIVE dB, e.g. 0..24)
+std::atomic<float> lastGRL { 0.0f };
+std::atomic<float> lastGRR { 0.0f };
+
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StereoCompressorBuild1AudioProcessor)
 }; //Prevents accidental copying of the class and adds memory leak detection features.
