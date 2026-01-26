@@ -26,6 +26,14 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
     params.push_back (std::make_unique<juce::AudioParameterBool>( //Bypass
         "bypass", "Bypass", false
     ));
+    params.push_back (std::make_unique<juce::AudioParameterBool>(
+        "scHPfOn", "Sidechain High-Pass Filter On", false 
+    ));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        "scHpfFreq", "Sidechain High-Pass Filter Frequency (Hz)",
+        juce::NormalisableRange<float>(20.0f, 300.0f, 1.0f, 0.5f), 80.0f
+    ));
+
 
     params.push_back (std::make_unique<juce::AudioParameterFloat>(
         "threshold", "Threshold (dB)",
@@ -70,6 +78,9 @@ void StereoCompressorBuild1AudioProcessor::prepareToPlay (double sampleRate, int
     rmsL.prepare (sampleRate);
     rmsR.prepare (sampleRate); //prepares RMS followers
     
+    scHpfL.prepare (sampleRate);
+    scHpfR.prepare (sampleRate);
+
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
 } //No DSP state yet. Will use this later for envelope filters, followers etc.
@@ -101,6 +112,14 @@ for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
     const float gainDb = apvts.getRawParameterValue("gain")->load(); //Get gain parameter value
 
     const int detectorMode = (int) apvts.getRawParameterValue ("detectorMode")->load(); // 0=Peak, 1=RMS
+
+    const bool scHpfOn = apvts.getRawParameterValue("scHPfOn")->load() > 0.5f; //Get sidechain HPF on/off parameter value
+    const float scHpfFreq = apvts.getRawParameterValue("scHpfFreq")->load(); //Get sidechain HPF frequency parameter value
+    if (scHpfOn)
+    {
+        scHpfL.setCutoff (scHpfFreq);
+        scHpfR.setCutoff (scHpfFreq);
+    }
 
     const float thresholdDb = apvts.getRawParameterValue("threshold")->load(); //Get threshold parameter value
     const float kneeDb = apvts.getRawParameterValue("knee")->load(); //Get knee parameter value
@@ -161,16 +180,22 @@ auto computeGainReductionDb = [&] (float inLevelDb)
     {
     float s = x[n] * inputGain;
         
+    float detIn = s;
+    if (scHpfOn)
+        detIn = (ch == 0) ? scHpfL.processSample (detIn)
+                         : scHpfR.processSample (detIn);
     float det = 0.0f;
 
             if (detectorMode == 0) // Peak
             {
-            det = (ch == 0) ? envL.processSample (s) : envR.processSample (s);
+            det = (ch == 0) ? envL.processSample (detIn) : envR.processSample (detIn);
             }
             else // RMS
             {
-            det = (ch == 0) ? rmsL.processSample (s) : rmsR.processSample (s);
+            det = (ch == 0) ? rmsL.processSample (detIn) : rmsR.processSample (detIn);
             }
+
+
         const float detDb = juce::Decibels::gainToDecibels (det + eps);
         const float grDb  = computeGainReductionDb (detDb);
         const float grLin = juce::Decibels::decibelsToGain (grDb); // It's a compressor now!!! WOOOO!!!!!!!

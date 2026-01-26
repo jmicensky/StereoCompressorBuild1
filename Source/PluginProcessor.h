@@ -58,6 +58,43 @@ private:
     std::atomic<float> lastEnvL { 0.0f };
     std::atomic<float> lastEnvR { 0.0f };
 
+struct OnePoleHPF
+{
+    void prepare (double sampleRate)
+    {
+        sr = sampleRate;
+        reset();
+        setCutoff (80.0f); //default cutoff frequency
+    }
+    void reset()
+    {
+        x1 = 0.0f;
+        y1 = 0.0f;   
+    }
+    void setCutoff (float hz)
+    {
+        hz = juce::jlimit (1.0f, 20000.0f, hz);
+        const float w = 2.0f * juce::MathConstants<float>::pi * hz / (float) sr;
+        const float x = std::exp (-w);
+
+        a1 = x;
+        b0 = (1.0f + x) * 0.5f;
+        b1 = -b0;   
+    }
+    float processSample (float x0)
+    {
+        const float y0 = b0 * x0 + b1 * x1 - a1 * y1;
+        x1 = x0;
+        y1 = y0;
+        return y0;
+    }
+    double sr = 44100.0;
+    float a1 = 0.0f, b0 = 0.0f, b1 = 0.0f;
+    float x1 = 0.0f, y1 = 0.0f;
+};
+
+
+
     // --- Gain Reduction meter smoothing (GUI only) ---
 float grMeterL = 0.0f;
 float grMeterR = 0.0f;
@@ -127,6 +164,9 @@ float grMeterR = 0.0f;
 
     EnvelopeFollower envL, envR;
     RMSFollower rmsL, rmsR;
+
+// Sidechain (detector) HPF
+OnePoleHPF scHpfL, scHpfR;
 
 // Gain Reduction meter values (store POSITIVE dB, e.g. 0..24)
 std::atomic<float> lastGRL { 0.0f };
