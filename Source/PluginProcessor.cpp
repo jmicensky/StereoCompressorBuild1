@@ -44,6 +44,12 @@ StereoCompressorBuild1AudioProcessor::createParameterLayout()
     juce::StringArray { "Peak", "RMS" },
     0
     )); //detector mode parameter
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+    "unlink", "Unlink (%)",
+    juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f
+    )); //stereo unlink parameter. Default = 0% (fully linked)
+
     params.push_back (std::make_unique<juce::AudioParameterChoice>(
         "ratio", "Ratio",
         juce::StringArray {"1.5:1", "3:1", "4:1","6:1", "10:1", "20:1"},
@@ -94,6 +100,8 @@ bool StereoCompressorBuild1AudioProcessor::isBusesLayoutSupported (const BusesLa
 
 void StereoCompressorBuild1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& )
 {
+    if (buffer.getNumChannels() < 2) return;
+
     juce::ScopedNoDenormals noDenormals;
     // Clear any output channels that don't have input data
 auto totalNumInputChannels  = getTotalNumInputChannels();
@@ -120,6 +128,9 @@ for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         scHpfL.setCutoff (scHpfFreq);
         scHpfR.setCutoff (scHpfFreq);
     }
+    const float unlinkPct = apvts.getRawParameterValue("unlink")->load(); // 0..100
+    const float unlink = juce::jlimit (0.0f, 1.0f, unlinkPct / 100.0f);   // 0..1
+    const float link = 1.0f - unlink; // 1=linked, 0=unlinked
 
     const float thresholdDb = apvts.getRawParameterValue("threshold")->load(); //Get threshold parameter value
     const float kneeDb = apvts.getRawParameterValue("knee")->load(); //Get knee parameter value
@@ -172,61 +183,66 @@ auto computeGainReductionDb = [&] (float inLevelDb)
 
 
 // Process every sample    
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-{
-    auto* x = buffer.getWritePointer (ch);
+
+auto* xL = buffer.getWritePointer (0);
+auto* xR = buffer.getWritePointer (1); //We need separate pointers for left and right channels
 
     for (int n = 0; n < buffer.getNumSamples(); ++n)
     {
-    float s = x[n] * inputGain;
-        
-    float detIn = s;
+    float sL = xL[n] * inputGain;
+    float sR = xR[n] * inputGain; //sL and sR represent the audio signals we'll compress and we want them aligned in time
+    
+
+    float detInL = sL;
+    float detInR = sR;
+
     if (scHpfOn)
-        detIn = (ch == 0) ? scHpfL.processSample (detIn)
-                         : scHpfR.processSample (detIn);
-    float det = 0.0f;
+       { detInL = scHpfL.processSample (detInL);
+         detInR = scHpfR.processSample (detInR);
+       }
 
-            if (detectorMode == 0) // Peak
-            {
-            det = (ch == 0) ? envL.processSample (detIn) : envR.processSample (detIn);
-            }
-            else // RMS
-            {
-            det = (ch == 0) ? rmsL.processSample (detIn) : rmsR.processSample (detIn);
-            }
+    float detL = 0.0f;
+    float detR = 0.0f;
 
+    if (detectorMode == 0) // Peak
+        {
+        detL = envL.processSample (detInL);
+        detR = envR.processSample (detInR);
+        }
+     else // RMS
+        {
+        detL = rmsL.processSample (detInL);
+        detR = rmsR.processSample (detInR);
+        }
+    const float linkedDet = juce::jmax (detL, detR); // “max link” behavior
+    const float detUsedL = detL * unlink + linkedDet * link;
+    const float detUsedR = detR * unlink + linkedDet * link;
 
-        const float detDb = juce::Decibels::gainToDecibels (det + eps);
-        const float grDb  = computeGainReductionDb (detDb);
-        const float grLin = juce::Decibels::decibelsToGain (grDb); // It's a compressor now!!! WOOOO!!!!!!!
-        const float grAmount = -grDb; // make it positive (e.g. 6 dB reduction => +6)
-            if (ch == 0) maxGRDbL = juce::jmax (maxGRDbL, grAmount);
-            else         maxGRDbR = juce::jmax (maxGRDbR, grAmount);
+    const float detDbL = juce::Decibels::gainToDecibels (detUsedL + eps);
+    const float detDbR = juce::Decibels::gainToDecibels (detUsedR + eps);
 
+    const float grDbL  = computeGainReductionDb (detDbL);
+    const float grDbR  = computeGainReductionDb (detDbR);
 
-x[n] = s * grLin * makeupGain;
+    const float grLinL = juce::Decibels::decibelsToGain (grDbL);
+    const float grLinR = juce::Decibels::decibelsToGain (grDbR);
+
+    maxGRDbL = juce::jmax (maxGRDbL, -grDbL);
+    maxGRDbR = juce::jmax (maxGRDbR, -grDbR);
+
+    xL[n] = sL * grLinL * makeupGain;
+    xR[n] = sR * grLinR * makeupGain;
 
     }
-}
-
-
-static int counter = 0;
-if (++counter >= 200)
-{
-    counter = 0;
-    DBG ("Env L: " << envL.getEnvelope() << "  Env R: " << envR.getEnvelope());
-}
 
 // --- Meter ballistics (fast attack, slow release) ---
 constexpr float meterRelease = 0.90f; // closer to 1 = slower decay
 
-grMeterL = juce::jmax (maxGRDbL, grMeterL * meterRelease);
-grMeterR = juce::jmax (maxGRDbR, grMeterR * meterRelease);
+grMeterL = juce::jmax(maxGRDbL, grMeterL * meterRelease);
+grMeterR = juce::jmax(maxGRDbR, grMeterR * meterRelease);
 
-lastGRL.store (grMeterL);
-lastGRR.store (grMeterR);
-
-} //THIS IS THE END OF THE PROCESS BLOCK
+}
+//THIS IS THE END OF THE PROCESS BLOCK
 
 
 juce::AudioProcessorEditor* StereoCompressorBuild1AudioProcessor::createEditor()
